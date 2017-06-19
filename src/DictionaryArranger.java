@@ -18,25 +18,49 @@ import java.util.regex.Pattern;
  */
 public class DictionaryArranger {
 	public ArrayList<String[]> finalList=new ArrayList<String[]>();
+	public ArrayList<String> needManualProcessList=new ArrayList<String>();
+	public ArrayList<String> sentenceWithEqualitySignList=new ArrayList<String>();
+	private String currentTargetText;
+//	private ArrayList<String> propertyList=buildPropertyList();    	//弃用，可删
 
 	public static void main(String[] args) {
 		DictionaryArranger da=new DictionaryArranger();
-		da.reg();
+		da.arrangeSingleLine("đo đếm đg 测量;计算 đo đỏ t 红通通,红彤彤");
+	}
+
+	public ArrayList<String[]> arrangeFullText(String fullText) {
+		String[] fullTextArray = fullText.split("\n");
+		for (String s : fullTextArray) {
+			arrangeSingleLine(s);
+		}
+		return finalList;
 	}
 	
-	private void reg(){
-		String target1="điêu trác đg 雕琢:điêu trác ngọc 雕琢玉器 t 狡猾,狡诈:quen thói điêu trác 习惯了狡诈điều d ①条款,条文,条例,条令:điều khoản chung 共同条款 cả nhà đã được đoàn viên 得以全家团聚②言语,话语:Nói điều hay, làm việc tốt. 说好话,做好事。 ③事情:Quí vị có thể làm được điều này. 各位可办成这事。④条,项";
-		String target2="đỏ đèn đg 上灯,点灯:Làng xóm đã đỏ đèn. 乡村已点上了灯。 d 点灯 (时刻,时分）: Đi từ mờ sớm đến đỏ đèn mới về. 天蒙蒙 亮出门,到点灯时分才回来。";
-		String target3="đoàn viên đg ① [旧] 团圆②团zi②团聚:cả nhà đã được đoàn viên 得以全家团聚 d 团员: họp đoàn viên đoàn chi đoàn支部团员会议";
+	private void arrangeSingleLine(String targetText){
+		currentTargetText=targetText;
 		String wordProperty=" d | đg | t | đ | p | k | tr | c ";
 		Pattern p=Pattern.compile(wordProperty);
-		String[] splitedPartsWithoutProperty=p.split(target1);
-		Matcher m=p.matcher(target1);
+		String[] splitedPartsWithoutProperty=p.split(targetText);
+		Matcher m=p.matcher(targetText);
 		String[] propertyArray=buildPropertyArray(m);
+		//检查切分失败的情况（失败的切分结果和原句相同）,因为无法区分"xxx好吃的"和"xxx dg好吃的"两种情况，此外还有xxx=yyy的情况，全部放进未处理列表中
+		if(splitedPartsWithoutProperty[0].equals(targetText)){
+			if(targetText.contains("=")) sentenceWithEqualitySignList.add(targetText);
+			else needManualProcessList.add(targetText);
+			return;
+		}
+
 		//检查切分是否正确，词属性数量应该比切分的部分少1个
 		checkSentenceDivisionValidation(splitedPartsWithoutProperty,propertyArray);
 		//记录下词条的越语词头
 		String vietEntry=splitedPartsWithoutProperty[0];
+
+		//用正则检查词头是否含有“đoạn [汉]断”这种情况，如果有，则将当前句加入待手工处理列表中，结束当前句子处理
+		if(hasChinese(vietEntry)){
+			needManualProcessList.add(currentTargetText);
+			return;
+		}
+//		System.out.println(vietEntry);    //打印所有可处理文本的词头
 		//将多对词性和释义存放进数组列表
 		ArrayList<String[]> property_ParaphasesPair=buildProperty_ParaphasesPair(splitedPartsWithoutProperty,propertyArray);
 		//进入词性-多句释义这一层
@@ -45,22 +69,16 @@ public class DictionaryArranger {
 //		ArrayList<String> sentenceAllParts=buildSentenceAllPartsList(splitedParts,propertyList);
 		//finalList.addAll(buildCurrentSentencePartsTable(m,splitedPartsWithoutProperty));
 
-        for (String[] s : finalList) {
-            System.out.println("");
-            System.out.println(s[0]);
-            System.out.println(s[1]);
-            System.out.println(s[2]);
-        }
 
 	}
 
     private void addParaphaseDetailToFinalList(String vietEntry,String property,String paraphaseDetail) {
-        String[] array={vietEntry,property,paraphaseDetail};
+        String[] array={vietEntry.trim(),property.trim(),paraphaseDetail.trim()};
         finalList.add(array);
     }
 
     private void addExampleSentenceToFinalList(String vietnameseSentence, String ChineseSentence) {
-        String[] array = {vietnameseSentence, "例句", ChineseSentence};
+        String[] array = {vietnameseSentence.trim(), "例句/短语", ChineseSentence.trim()};
         finalList.add(array);
     }
 
@@ -68,22 +86,85 @@ public class DictionaryArranger {
 	private void arrangePair(String vietEntry,ArrayList<String[]> pairList){
 		for(String[] array:pairList){
 			String property=array[0];
+			//按①②切分，放进以下数组
 			String[] singleParaphaseArray=splitToSingleParaphase(array[1]);
             for (String singleParaphase : singleParaphaseArray) {
+            	//将具体释义和例句切分
                 String[] paraphaseDetailAndExampleSentences = Pattern.compile(":").split(singleParaphase);
-                addParaphaseDetailToFinalList(vietEntry, property, paraphaseDetailAndExampleSentences[0]);
+                //head指①等标记
+				String headlessParaphaseDetail = removeHeadFromeParaphaseDetail(paraphaseDetailAndExampleSentences[0].trim());
+
+				//可能存在这种情况：đo đếm đg 测量;计算 đo đỏ t 红通通,红彤彤。两个句子没有分开。
+				//如果没有分开，第二句的词头部分会跟着第一句的汉语释义，因此可以从headlessParaphaseDetail中检测出来
+				//检测headlessParaphaseDetail是否含有越南语字符,如果有则将整句添加到待处理列表，并跳出当前句处理流程
+
+				//另外还会有"đô hộ d [旧] 都护 (古官名）đg 都护统治"，这种情况，第二个词性dg与前面没有切分开。
+				//碰到这样情况，和碰到上述两句未切分的情况一同处理。
+				if(containsVietnamese(headlessParaphaseDetail)){
+					needManualProcessList.add(currentTargetText);
+					return;
+				}
+				else addParaphaseDetailToFinalList(vietEntry, property, headlessParaphaseDetail);
                 //得到多组越-汉例句
                 if(paraphaseDetailAndExampleSentences.length==1)continue;   //如果没有例句，则继续下一个释义_例句句对
                 //例句中如果含有多个例句，则切分成单个例句
                 String[] singleExampleSentenceArray=getSingleExampleSentenceArray(paraphaseDetailAndExampleSentences[1]);
 
-                //6.13从此处开始，上面的数组得到了一个一个的例句，下面需要将例句分割成越语-汉语句对
+                //上面的数组得到了一个一个的例句，下面将例句分割成越语-汉语句对
                 for (String singleExampleSentence : singleExampleSentenceArray) {
-                    String[] seperatedVietChnExampleSentence = seperateVietnameseAndChineseFromExampleSentence(singleExampleSentence);
-                    addExampleSentenceToFinalList(seperatedVietChnExampleSentence[0],seperatedVietChnExampleSentence[1]);
+                    String[] separatedVietChnExampleSentence = seperateVietnameseAndChineseFromExampleSentence(singleExampleSentence);
+                    addExampleSentenceToFinalList(separatedVietChnExampleSentence[0],separatedVietChnExampleSentence[1]);
                 }
             }
         }
+	}
+
+	private boolean containsVietnamese(String headlessParaphaseDetail) {
+		Pattern p=Pattern.compile("[\u00e0-\u017f\u1ea0-\u1ef1]");
+		Matcher m = p.matcher(headlessParaphaseDetail);
+		if(m.find())return true;
+		else return false;
+	}
+
+	//弃用
+	private ArrayList<String> buildPropertyList(){
+		ArrayList<String> propertyList = new ArrayList<String>();
+		propertyList.add("d");
+		propertyList.add("đg");
+		propertyList.add("t");
+		propertyList.add("đ");
+		propertyList.add("p");
+		propertyList.add("k");
+		propertyList.add("tr");
+		propertyList.add("c");
+		return propertyList;
+	}
+
+	//!！注意，该函数废止，因为无法区分“abc 中文释义”与“abc dg中文释义”，因此两种情况全部留待手工处理
+	//原始文本中有一部分越南语-汉语的句对，类似例句模式。该函数用正则表达式抽取越-汉句对，如果句对数量超过2，代表匹配错误，由调用者处理。
+	private String[] separateToViet_ChnArrayUseReg(String Viet_ChnSentence) {
+		ArrayList<String> separatedViet_Chn = new ArrayList<String>();
+		Pattern p = Pattern.compile("([\u0030-\u0039\u0041-\u005a\u0061-\u007a\u00e0-\u017f\u1ea0-\u1ef1\u01b0\u01a1 \\-\\(\\),.!?;\"']+)([\u4e00-\u9fff][\u0030-\u0039\u4e00-\u9fff ,.，。;、!?\\(\\)]*)");
+		Matcher m = p.matcher(Viet_ChnSentence);
+		while (m.find()) {
+			String tmp=m.group(1);
+			System.out.println(m.group(1)+"|"+m.group(2));
+			separatedViet_Chn.add(tmp);
+		}
+		String[] tmpArray=new String[separatedViet_Chn.size()];
+		for (String s : separatedViet_Chn) {
+			System.out.println(s);
+		}
+		return separatedViet_Chn.toArray(tmpArray);
+	}
+
+	private String removeHeadFromeParaphaseDetail(String paraphaseDetailWithHead) {
+		try{
+			char c = paraphaseDetailWithHead.charAt(0);
+			if(c>='\u2460' && c<='\u2473') return paraphaseDetailWithHead.substring(1, paraphaseDetailWithHead.length());
+			else return paraphaseDetailWithHead;
+		}catch(Exception e){}
+		return "";
 	}
 
     private String[] seperateVietnameseAndChineseFromExampleSentence(String singleExampleSentece) {
@@ -110,8 +191,15 @@ public class DictionaryArranger {
         else return 0;
     }
 
-    private String[] getSingleExampleSentenceArray(String multiExampleSentencePair) {
-        Pattern p = Pattern.compile("[\u0030-\u0039\u0041-\u005a\u0061-\u007a\u00e0-\u017f\u1ea0-\u1ef1\u01b0\u01a1 \\-\\(\\),.!?;\"\']+[\u4e00-\u9fff][\u0030-\u0039\u4e00-\u9fff ,.，。;、!?\\(\\)]*");
+	private boolean hasChinese(String s) {
+		Pattern p=Pattern.compile("[\u4eff-\u9fff]");
+		Matcher m = p.matcher(s);
+		if(m.find())return true;
+		else return false;
+	}
+
+	private String[] getSingleExampleSentenceArray(String multiExampleSentencePair) {
+        Pattern p = Pattern.compile("[\u0030-\u0039\u0041-\u005a\u0061-\u007a\u00c0-\u017f\u1ea0-\u1ef1\u01b0\u01a1 \\-\\(\\),.!?;\"\']+[\u4e00-\u9fff][\u0030-\u0039\u4e00-\u9fff \\-——.，,。;、!?\\(\\)]*");
         Matcher m = p.matcher(multiExampleSentencePair);
         ArrayList<String> arrayList = new ArrayList<String>();
         while (m.find()) {
